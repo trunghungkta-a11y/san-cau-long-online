@@ -18,20 +18,20 @@ hoặc khán giả.
 
 ## Chơi qua mạng (Firebase)
 
-`js/config.js` đang dùng chung project Firebase `chua-dang-khoa` với chùa online. Dữ liệu sân cầu lông nằm riêng
-dưới nhánh `badminton`, không đụng dữ liệu của chùa. Trang đăng nhập ẩn danh giống chùa online, nên đã bật
-Anonymous và tên miền `<tên-github>.github.io` cho chùa thì không cần làm lại.
+Dự án dùng project Firebase riêng `san-cau-long-online` (tách hẳn khỏi chùa online: khác cơ sở dữ liệu,
+khác tên miền đăng nhập `san-cau-long-online.firebaseapp.com`). Cấu hình đã có trong `js/config.js`.
 
-Việc cần làm một lần trong Firebase Console:
+Đã thiết lập trong Firebase Console:
 
-1. Realtime Database → Rules: giữ nguyên nhánh `chua`, thêm nhánh `badminton` trong `database.rules.json`
-   ngang hàng với nó (trong `"rules": { ... }`) → Publish.
-2. Nếu dùng project khác: bật Authentication → Sign-in method → Anonymous, thêm tên miền GitHub Pages vào
-   Authentication → Settings → Authorized domains, rồi dán `firebaseConfig` vào `js/config.js`.
+1. Authentication → Sign-in method → Anonymous: bật.
+2. Authentication → Settings → Authorized domains: thêm `trunghungkta-a11y.github.io`.
+3. Realtime Database (Singapore, asia-southeast1), Rules = nội dung `database.rules.json`
+   (chỉ nhánh `badminton`, đọc/ghi khi đã đăng nhập ẩn danh).
 
 Khi thiếu một trong các bước trên, trang tự chuyển về chế độ cục bộ và băng vàng phía trên ghi rõ thiếu gì.
 
 GitHub Pages: Settings → Pages → Branch `main`, thư mục `/ (root)`.
+Địa chỉ: https://trunghungkta-a11y.github.io/san-cau-long-online/
 
 ## Cách chơi
 
