@@ -1,0 +1,17 @@
+{
+  "rules": {
+    "badminton": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "courts": {
+        "$court": {
+          ".validate": "$court.matches(/^[0-8]$/)"
+        }
+      },
+      "pos":     { "$court": { ".validate": "$court.matches(/^[0-8]$/)" } },
+      "shots":   { "$court": { ".validate": "$court.matches(/^[0-8]$/)" } },
+      "intents": { "$court": { ".validate": "$court.matches(/^[0-8]$/)" } },
+      "calls":   { "$court": { ".validate": "$court.matches(/^[0-8]$/)" } }
+    }
+  }
+}

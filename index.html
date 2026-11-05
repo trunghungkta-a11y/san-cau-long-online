@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Sân cầu lông online</title>
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<header id="topbar">
+  <div class="brand">🏸 <span>Sân cầu lông online</span></div>
+  <div class="grow"></div>
+  <span id="netMode" class="chip"></span>
+  <button id="nameBtn" class="chip btn"></button>
+</header>
+
+<div id="banner" hidden></div>
+
+<!-- Sảnh: danh sách 9 sân -->
+<section id="hall" class="panel">
+  <h2>Chọn sân</h2>
+  <div id="courtList"></div>
+  <p class="muted small">Bấm vào sân trong cảnh 3D hoặc vào thẻ để nhận sân, vào chơi, làm trọng tài biên hoặc xem.</p>
+</section>
+
+<!-- Trong sân -->
+<section id="courtUI" hidden>
+  <div id="score"></div>
+  <div id="toast"></div>
+  <div id="qflash"></div>
+
+  <aside id="roster" class="panel"></aside>
+
+  <div id="bottom">
+    <div id="playHud" class="panel" hidden>
+      <div class="row">
+        <div class="meter"><label>Lực</label><div class="bar"><i id="powerFill"></i></div><span id="powerTxt"></span></div>
+        <div class="meter"><label>Góc</label>
+          <div id="elBtns">
+            <button data-el="-8" title="Đập cầu (phím 1)">Đập</button>
+            <button data-el="8" title="Đánh tạt (phím 2)">Tạt</button>
+            <button data-el="22" title="Cắt cầu (phím 3)">Cắt</button>
+            <button data-el="45" title="Phông cầu (phím 4)">Phông</button>
+            <button data-el="62" title="Lốp cầu (phím 5)">Lốp</button>
+          </div>
+          <span id="elTxt"></span>
+        </div>
+      </div>
+      <div class="row">
+        <div class="timing"><div id="tzone"><i id="tz2"></i><i id="tz1"></i></div><b id="tmark"></b></div>
+      </div>
+      <div class="row between">
+        <span id="hint"></span>
+        <span class="toggles">
+          <label><input type="checkbox" id="optAssist" checked> Trợ lực</label>
+          <label><input type="checkbox" id="optArc" checked> Đường bay</label>
+        </span>
+      </div>
+    </div>
+
+    <div id="judgeHud" class="panel" hidden>
+      <div class="row between"><span id="judgeHint"></span></div>
+      <div class="row">
+        <button id="callIn" class="call in">IN <small>Z</small></button>
+        <button id="callOut" class="call out">OUT <small>X</small></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tools">
+    <button id="viewBtn" class="chip btn">Góc nhìn</button>
+    <button id="leaveBtn" class="chip btn danger">Rời sân</button>
+  </div>
+
+  <div id="touch" hidden>
+    <div id="stick"><i></i></div>
+    <button id="hitBtn">ĐÁNH</button>
+  </div>
+</section>
+
+<!-- Hộp thoại -->
+<div id="modal" hidden><div id="modalBox" class="panel"></div></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
