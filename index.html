@@ -19,6 +19,7 @@
   <div class="brand">🏸 <span>Sân cầu lông online</span></div>
   <div class="grow"></div>
   <span id="netMode" class="chip"></span>
+  <button id="chatBtn" class="chip btn" title="Mở / đóng khung bình luận">💬 <span class="lbl">Bình luận</span><b id="chatBadge" hidden></b></button>
   <button id="nameBtn" class="chip btn"></button>
 </header>
 
@@ -42,8 +43,8 @@
   <div id="bottom">
     <div id="playHud" class="panel" hidden>
       <div class="row">
-        <div class="meter"><label>Lực</label><div class="bar"><i id="powerFill"></i></div><span id="powerTxt"></span></div>
-        <div class="meter"><label>Góc</label>
+        <div class="meter" id="mPow"><label>Lực</label><div class="bar"><i id="powerFill"></i></div><span id="powerTxt"></span></div>
+        <div class="meter" id="mEl"><label>Góc</label>
           <div id="elBtns">
             <button data-el="-8" title="Đập cầu (phím 1)">Đập</button>
             <button data-el="8" title="Đánh tạt (phím 2)">Tạt</button>
@@ -60,6 +61,7 @@
       <div class="row between">
         <span id="hint"></span>
         <span class="toggles">
+          <label class="touch-only"><input type="checkbox" id="optAuto" checked> Tự chạy</label>
           <label><input type="checkbox" id="optAssist" checked> Trợ lực</label>
           <label><input type="checkbox" id="optArc" checked> Đường bay</label>
         </span>
@@ -80,10 +82,29 @@
     <button id="leaveBtn" class="chip btn danger">Rời sân</button>
   </div>
 
+  <!-- Điện thoại: nửa trái kéo để chạy (cần ảo hiện tại chỗ đặt ngón), nửa phải vuốt để đánh -->
   <div id="touch" hidden>
+    <div class="zone zl"><span>Kéo để chạy</span></div>
+    <div class="zone zr"><span>Vuốt để đánh<small>lên: sâu · ngang: chéo · xuống: đập</small></span></div>
     <div id="stick"><i></i></div>
-    <button id="hitBtn">ĐÁNH</button>
+    <div id="swipeLine" hidden></div>
   </div>
+  <div id="shotBar" hidden></div>
+</section>
+
+<!-- Bình luận: kênh Sảnh chung + kênh riêng của sân đang vào -->
+<section id="chat" class="panel" hidden>
+  <div class="chat-head">
+    <div id="chatTabs" class="seg"></div>
+    <span class="grow"></span>
+    <button id="chatClose" class="mini" title="Thu gọn">✕</button>
+  </div>
+  <div id="chatList" aria-live="polite"></div>
+  <form id="chatForm" autocomplete="off">
+    <input id="chatIn" type="text" maxlength="300" placeholder="Viết bình luận…">
+    <button class="mini" id="chatSend" type="submit">Gửi</button>
+  </form>
+  <p id="chatNote" class="muted small"></p>
 </section>
 
 <!-- Hộp thoại -->
