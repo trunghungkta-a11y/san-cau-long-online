@@ -1,13 +1,12 @@
 // Dán cấu hình Firebase của bạn vào đây (Project settings → General → Your apps → Web app).
-// Có thể dùng chung project với "chùa online": dữ liệu sân cầu lông nằm riêng dưới nhánh "badminton".
 // Để trống apiKey/databaseURL thì trang chạy ở chế độ cục bộ: chỉ chơi được giữa các tab trong cùng một trình duyệt.
-// Đang dùng chung project Firebase "chua-dang-khoa" với chùa online.
+// Project Firebase riêng của sân cầu lông (tách khỏi chùa online): san-cau-long-online
 export const FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyAoZruBOiw4UaoUT_4-PcQVTAv6udz2RW8',
-  authDomain: 'chua-dang-khoa.firebaseapp.com',
-  databaseURL: 'https://chua-dang-khoa-default-rtdb.asia-southeast1.firebasedatabase.app',
-  projectId: 'chua-dang-khoa',
-  appId: '1:37957240846:web:1d2096baa777811ef9d45f',
+  apiKey: 'AIzaSyDRuxH2dfQ4JRK6lBQ3aZXvrGQT-pKUUNk',
+  authDomain: 'san-cau-long-online.firebaseapp.com',
+  databaseURL: 'https://san-cau-long-online-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'san-cau-long-online',
+  appId: '1:1015280760273:web:bfc0c7e1553203453a9cf0',
 };
 
 export const DB_ROOT = 'badminton';
