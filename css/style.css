@@ -26,6 +26,27 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #banner { position: fixed; top: 54px; left: 50%; transform: translateX(-50%); z-index: 6; max-width: min(640px, 92vw); text-align: center;
   background: rgba(255, 191, 71, .14); border: 1px solid rgba(255, 191, 71, .5); color: #ffd98a; padding: 6px 12px; border-radius: 10px; font-size: 12.5px; }
 
+/* bình luận */
+#chatBtn { position: relative; }
+#chatBadge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 700; }
+#chat { position: fixed; left: 14px; top: 58px; width: 310px; height: 300px; z-index: 6; display: flex; flex-direction: column; padding: 10px 12px; }
+.chat-head { display: flex; align-items: center; gap: 6px; }
+.chat-head .seg button { font-size: 12.5px; }
+.chat-head .cnt { display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 3px; border-radius: 8px; background: var(--bad); color: #fff; font-size: 10.5px; line-height: 16px; }
+#chatList { flex: 1; min-height: 0; overflow-y: auto; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; }
+.msg { font-size: 13px; line-height: 1.38; overflow-wrap: anywhere; }
+.msg .who { font-weight: 700; margin-right: 6px; }
+.msg.me .who { color: var(--acc); }
+.msg .rl { font-size: 10.5px; padding: 0 5px; border-radius: 6px; border: 1px solid var(--line); color: var(--mut); margin-right: 5px; white-space: nowrap; }
+.msg .tm { color: var(--mut); font-size: 11px; margin-left: 5px; white-space: nowrap; }
+.msg.bay { padding: 4px 6px; border-radius: 8px; border: 1px solid #9ab8ff; background: rgba(80, 100, 150, .25); }
+.msg .bay-tag { display: block; font-size: 11px; color: #b9cdff; margin-top: 2px; }
+#chatForm { display: flex; gap: 6px; }
+#chatIn { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: rgba(255, 255, 255, .06); color: var(--txt); font: inherit; }
+#chatIn:focus { outline: none; border-color: var(--acc); }
+#chatNote { margin: 4px 0 0; min-height: 0; } #chatNote:empty { display: none; }
+
 /* sảnh */
 #hall { position: fixed; left: 14px; bottom: 14px; width: min(470px, calc(100vw - 28px)); z-index: 4; }
 #courtList { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -72,6 +93,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .cta { width: 100%; margin-top: 10px; padding: 10px; border-radius: 10px; border: 0; background: var(--acc); color: #0b1320; font-weight: 800; font-size: 15px; }
 .cta[disabled] { opacity: .4; cursor: default; }
 .cta.ghost { background: transparent; border: 1px solid var(--line); color: var(--txt); font-weight: 600; margin-top: 6px; }
+.specs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.specs .sp { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: rgba(138, 99, 210, .22); border: 1px solid rgba(138, 99, 210, .45); }
+.specs .sp.me { border-color: var(--acc); }
 .result { text-align: center; padding: 8px 0; font-size: 16px; font-weight: 700; }
 
 #bottom { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 4; width: min(680px, calc(100vw - 20px)); }
@@ -102,10 +126,24 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .call.sel { background: currentColor; } .call.sel { color: #0b1320 !important; }
 
 #tools { position: fixed; right: 14px; bottom: 14px; z-index: 4; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
-#touch { position: fixed; inset: auto 0 14px 0; z-index: 3; pointer-events: none; }
-#stick { position: absolute; left: 22px; bottom: 100px; width: 110px; height: 110px; border-radius: 50%; background: rgba(255, 255, 255, .08); border: 1px solid var(--line); pointer-events: auto; touch-action: none; }
-#stick i { position: absolute; left: 35px; top: 35px; width: 40px; height: 40px; border-radius: 50%; background: rgba(200, 245, 66, .6); }
-#hitBtn { position: absolute; right: 22px; bottom: 110px; width: 92px; height: 92px; border-radius: 50%; border: 0; background: rgba(200, 245, 66, .85); color: #0b1320; font-weight: 900; pointer-events: auto; touch-action: none; }
+
+/* điều khiển điện thoại */
+.touch-only { display: none; } body.touch .touch-only { display: inline; }
+body.touch #mEl { display: none; }
+#touch { position: fixed; inset: 0; z-index: 3; touch-action: none; user-select: none; -webkit-user-select: none; }
+#touch .zone { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+#touch .zl { left: 0; width: 45%; } #touch .zr { right: 0; width: 55%; border-left: 1px dashed rgba(255, 255, 255, .07); }
+#touch .zone span { color: rgba(255, 255, 255, .24); font-size: 13px; font-weight: 700; text-align: center; margin-top: 22vh; }
+#touch .zone small { display: block; font-weight: 500; font-size: 11px; margin-top: 3px; }
+#stick { position: absolute; left: 0; top: 0; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; background: rgba(255, 255, 255, .08);
+  border: 1px solid rgba(255, 255, 255, .2); pointer-events: none; opacity: 0; transition: opacity .12s; }
+#stick.on { opacity: 1; }
+#stick i { position: absolute; left: 34px; top: 34px; width: 44px; height: 44px; border-radius: 50%; background: rgba(200, 245, 66, .7); }
+#swipeLine { position: absolute; left: 0; top: 0; height: 6px; margin-top: -3px; border-radius: 3px; pointer-events: none;
+  background: linear-gradient(90deg, rgba(200, 245, 66, .1), rgba(200, 245, 66, .9)); transform-origin: 0 50%; }
+#shotBar { position: fixed; right: 8px; top: 50%; transform: translateY(-50%); z-index: 5; display: flex; flex-direction: column; gap: 6px; }
+#shotBar button { width: 54px; height: 36px; border-radius: 11px; border: 1px solid var(--line); background: rgba(13, 20, 36, .62); font-size: 12.5px; font-weight: 700; touch-action: manipulation; }
+#shotBar button.on { background: var(--acc); color: #0b1320; border-color: var(--acc); }
 
 #modal { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; background: rgba(5, 9, 18, .62); }
 #modalBox { width: min(420px, 92vw); max-height: 90vh; overflow: auto; padding: 18px; }
@@ -125,8 +163,11 @@ button { font: inherit; color: inherit; cursor: pointer; }
   #toast { top: 124px; }
   #bottom { bottom: 6px; } #tools { bottom: auto; top: 108px; right: 10px; flex-direction: row; }
   .bar { width: 100px; } .brand span { display: none; }
-  #stick { bottom: 215px; left: 14px; width: 104px; height: 104px; } #stick i { left: 32px; top: 32px; }
-  #hitBtn { bottom: 222px; right: 14px; width: 88px; height: 88px; }
   #banner { top: 50px; font-size: 11.5px; padding: 5px 10px; }
   #playHud { padding: 8px 10px; } #playHud .row { gap: 8px; }
+  #chatBtn .lbl { display: none; }
+  body.playing #roster { top: 108px; bottom: auto; right: auto; width: 44vw; padding: 8px 10px; }
+  body.playing #roster h2 { font-size: 13px; } body.playing #roster h2 .chip { display: none; }
+  body.touch #playHud .toggles { gap: 8px; }
+  #chat { left: 10px; right: 10px; width: auto; top: 50px; height: 46vh !important; z-index: 7; }
 }
