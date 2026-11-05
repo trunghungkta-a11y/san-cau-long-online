@@ -14,6 +14,13 @@ export const STANDBY = {
   t0p0: [0, 4.6], t0p1: [2.0, 4.6], t1p0: [0, -4.6], t1p1: [-2.0, -4.6],
 };
 export const TEAM_COLOR = [0xd9433f, 0x2e74d6];
+export const SPEC_COLOR = 0x8a63d2;
+// Chỗ đứng của khán giả: hai biên dọc ngoài sân, mỗi bên 9 chỗ cách nhau 1,5 m
+export const SPEC_X = 5.15, SPEC_PER_SIDE = 9;
+export const specPos = (k) => {
+  const side = k % 2 === 0 ? 1 : -1, idx = Math.floor(k / 2);
+  return [side * SPEC_X, -6 + idx * 1.5];
+};
 
 const PX = 64;                                // điểm ảnh / mét của texture sân
 const FLOOR_W = 9.4, FLOOR_L = 17.8;
@@ -82,17 +89,22 @@ function drawBoard(sp, { title, line1, line2, color }) {
   tex.needsUpdate = true;
 }
 
-function nameTag(text, color = '#fff') {
-  const sp = labelSprite(256, 64, 1.9);
+function drawTag(sp, text, color) {
   const { ctx: g, tex, w, h } = sp.userData;
+  g.clearRect(0, 0, w, h);
+  if (!text) { tex.needsUpdate = true; return; }
   g.fillStyle = 'rgba(10,16,28,.7)'; g.beginPath(); g.roundRect(2, 8, w - 4, h - 16, 14); g.fill();
   g.fillStyle = color; g.font = 'bold 30px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(text.length > 14 ? text.slice(0, 13) + '…' : text, w / 2, h / 2 + 1);
+  g.fillText(text.length > 16 ? text.slice(0, 15) + '…' : text, w / 2, h / 2 + 1);
   tex.needsUpdate = true;
+}
+function nameTag(text, color = '#fff', scale = 1.9) {
+  const sp = labelSprite(256, 64, scale);
+  drawTag(sp, text, color);
   return sp;
 }
 
-function makeAvatar(color, name, judge) {
+function makeAvatar(color, name, judge, opt = {}) {
   const grp = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.7 });
   const skin = new THREE.MeshStandardMaterial({ color: 0xf0c9a4, roughness: 0.8 });
@@ -109,7 +121,9 @@ function makeAvatar(color, name, judge) {
   const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.55, 8), skin);
   upper.position.y = 0.0; upper.rotation.x = Math.PI / 2; upper.position.z = 0.27;
   arm.add(upper);
-  if (!judge) {
+  if (opt.spec) {
+    upper.rotation.x = 0.2; upper.position.set(0, -0.25, 0.05);     // tay buông, không vợt
+  } else if (!judge) {
     const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.4, 6), dark);
     handle.rotation.x = Math.PI / 2; handle.position.z = 0.7;
     const head2 = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.015, 6, 20), new THREE.MeshStandardMaterial({ color: 0xeeeeee }));
@@ -122,11 +136,53 @@ function makeAvatar(color, name, judge) {
   }
   arm.rotation.x = -0.4;
   grp.add(arm);
-  const tag = nameTag(name, judge ? '#ffe14d' : '#fff');
-  tag.position.y = 2.25;
+  const tag = nameTag(name, opt.tagColor || (judge ? '#ffe14d' : '#fff'), opt.tagScale);
+  tag.position.y = opt.spec ? 2.05 : 2.25;
   grp.add(tag);
-  grp.userData = { arm, tag, swingT: 9, x: 0, z: 0, tx: 0, tz: 0, name, judge };
+  if (opt.spec) grp.scale.setScalar(0.88);
+  grp.userData = { arm, tag, swingT: 9, x: 0, z: 0, tx: 0, tz: 0, name, judge, spec: !!opt.spec, pid: opt.pid || null, zap: 0, mats: null };
   return grp;
+}
+
+const UPV = new THREE.Vector3(0, 1, 0);
+function makeBolt(a, b) {
+  const g = new THREE.Group();
+  const core = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  const glow = new THREE.MeshBasicMaterial({ color: 0x8fb0ff, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false });
+  const rnd = (v) => (Math.random() * 2 - 1) * v;
+  const seg = (p, q, r) => {
+    const d = q.clone().sub(p), len = d.length(), mid = p.clone().addScaledVector(d, 0.5); d.normalize();
+    for (const [rr, m] of [[r, core], [r * 4, glow]]) {
+      const cyl = new THREE.Mesh(new THREE.CylinderGeometry(rr, rr, len, 5, 1, true), m);
+      cyl.position.copy(mid); cyl.quaternion.setFromUnitVectors(UPV, d); g.add(cyl);
+    }
+  };
+  const path = (p, q, n, amp, r, branch) => {
+    let prev = p.clone();
+    for (let i = 1; i <= n; i++) {
+      const pt = p.clone().lerp(q, i / n);
+      if (i < n) { pt.x += rnd(amp); pt.z += rnd(amp); pt.y += rnd(amp) * 0.3; }
+      seg(prev, pt, r);
+      if (branch && i > 1 && i < n - 3 && Math.random() < 0.35) {
+        path(pt, pt.clone().add(new THREE.Vector3(rnd(3), -2 - Math.random() * 2, rnd(3))), 4, amp * 0.6, r * 0.6, false);
+      }
+      prev = pt;
+    }
+  };
+  path(a, b, 14, 0.8, 0.07, true);
+  g.userData = { core, glow };
+  return g;
+}
+function disposeBolt(g) {
+  g.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+  g.userData.core.dispose(); g.userData.glow.dispose();
+}
+function charAvatar(a, mat, on) {
+  a.traverse((o) => {
+    if (!o.isMesh) return;
+    if (on) { if (!o.userData.mat0) o.userData.mat0 = o.material; o.material = mat; }
+    else if (o.userData.mat0) { o.material = o.userData.mat0; o.userData.mat0 = null; }
+  });
 }
 
 export class Scene3D {
@@ -164,7 +220,12 @@ export class Scene3D {
 
   build() {
     const S = this.scene;
-    S.add(new THREE.HemisphereLight(0xdfe9ff, 0x3a3326, 1.05));
+    this.hemi = new THREE.HemisphereLight(0xdfe9ff, 0x3a3326, 1.05);
+    S.add(this.hemi);
+    this.strikeLight = new THREE.PointLight(0xbfd2ff, 0, 30, 1.6);
+    S.add(this.strikeLight);
+    this.bolts = []; this.flashAmt = 0;
+    this.charMat = new THREE.MeshStandardMaterial({ color: 0x15110f, roughness: 1 });
     const sun = new THREE.DirectionalLight(0xffffff, 1.1);
     sun.position.set(20, 60, 30); S.add(sun);
     const hall = new THREE.Mesh(new THREE.PlaneGeometry(76, 112), new THREE.MeshStandardMaterial({ color: 0x8c6b43, roughness: 0.9 }));
@@ -226,7 +287,9 @@ export class Scene3D {
   resize() {
     const w = this.canvas.clientWidth || innerWidth, h = this.canvas.clientHeight || innerHeight;
     this.r.setSize(w, h, false);
-    this.cam.aspect = w / h; this.cam.updateProjectionMatrix();
+    this.cam.aspect = w / h;
+    this.cam.fov = this.cam.aspect < 0.8 ? 68 : 52;            // điện thoại dọc: mở rộng góc nhìn để thấy hết bề ngang sân
+    this.cam.updateProjectionMatrix();
   }
 
   // ------------------------------------------------------------ camera / chế độ
@@ -290,29 +353,60 @@ export class Scene3D {
   setRoster(i, roster) {
     const c = this.courts[i];
     const want = {};
+    const self = roster.selfId;
     for (const [k, p] of Object.entries(roster.players || {})) {
-      want[k] = { name: p.bot ? `${p.name || 'Máy'} 🤖` : p.name, color: TEAM_COLOR[Number(k[1])], judge: false };
+      want[k] = { name: p.bot ? `${p.name || 'Máy'} 🤖` : p.name, color: TEAM_COLOR[Number(k[1])], judge: false, pid: p.id };
     }
     for (const j of ['j0', 'j1']) {
       const n = roster.judges?.[j];
-      want[j] = { name: n ? n.name : 'TT biên (máy)', color: n ? 0xffd23f : 0x8d97a8, judge: true };
+      want[j] = { name: n ? n.name : 'TT biên (máy)', color: n ? 0xffd23f : 0x8d97a8, judge: true, pid: n?.id };
     }
+    // khán giả: xếp theo thời điểm vào xem (rồi theo id) để chỗ đứng ổn định
+    const specs = Object.values(roster.specs || {}).filter((p) => p && p.id)
+      .sort((a, b) => (a.ts || 0) - (b.ts || 0) || (a.id < b.id ? -1 : 1));
+    const maxSpec = SPEC_PER_SIDE * 2;
+    specs.slice(0, specs.length > maxSpec ? maxSpec - 1 : maxSpec).forEach((p, k) => {
+      want[`s_${p.id}`] = { name: p.name || 'Khách', color: SPEC_COLOR, spec: true, pid: p.id, pos: specPos(k), me: p.id === self };
+    });
+    const extra = specs.length > maxSpec ? specs.length - (maxSpec - 1) : 0;
     for (const [k, a] of Object.entries(c.avatars)) {
-      if (!want[k] || a.userData.name !== want[k].name) { c.group.remove(a); delete c.avatars[k]; }
+      const w = want[k];
+      if (!w || a.userData.name !== w.name || a.userData.me !== !!w.me) { c.group.remove(a); delete c.avatars[k]; }
     }
     for (const [k, w] of Object.entries(want)) {
-      if (c.avatars[k]) continue;
-      const a = makeAvatar(w.color, w.name, w.judge);
-      const [x, z] = w.judge ? JUDGE_POS[k] : STANDBY[k];
-      Object.assign(a.userData, { x, z, tx: x, tz: z });
-      a.position.set(x, 0, z);
-      a.rotation.y = this.faceFor(k, x, z);
-      c.group.add(a); c.avatars[k] = a;
+      let a = c.avatars[k];
+      if (!a) {
+        a = makeAvatar(w.color, w.name, w.judge, w.spec ? { spec: true, tagScale: 1.75, tagColor: w.me ? '#c8f542' : '#e3d7ff', pid: w.pid } : { pid: w.pid });
+        const [x, z] = w.spec ? w.pos : w.judge ? JUDGE_POS[k] : STANDBY[k];
+        Object.assign(a.userData, { x, z, tx: x, tz: z, me: !!w.me });
+        a.position.set(x, 0, z);
+        a.rotation.y = this.faceFor(k, x, z);
+        c.group.add(a); c.avatars[k] = a;
+      }
+      a.userData.pid = w.pid || null;
+      if (w.spec) { a.userData.tx = w.pos[0]; a.userData.tz = w.pos[1]; a.rotation.y = this.faceFor(k, w.pos[0], w.pos[1]); }
     }
+    // "+N" khi quá 18 khán giả
+    if (extra) {
+      if (!c.more) { c.more = nameTag('', '#e3d7ff', 1.75); c.group.add(c.more); }
+      const [x, z] = specPos(maxSpec - 1);
+      c.more.position.set(x, 1.0, z);
+      if (c.moreN !== extra) { c.moreN = extra; drawTag(c.more, `+${extra} người xem`, '#e3d7ff'); }
+      c.more.visible = true;
+    } else if (c.more) c.more.visible = false;
   }
   faceFor(k, x, z) {
     if (k[0] === 'j') return Math.atan2(-x, -z);
+    if (k[0] === 's') return x > 0 ? -Math.PI / 2 : Math.PI / 2;      // khán giả nhìn vào giữa sân
     return k[1] === '0' ? Math.PI : 0;
+  }
+  /** Tìm avatar theo id người dùng → {ci, key} */
+  findPerson(pid) {
+    if (!pid) return null;
+    for (let i = 0; i < this.courts.length; i++) {
+      for (const [k, a] of Object.entries(this.courts[i].avatars)) if (a.userData.pid === pid) return { ci: i, key: k };
+    }
+    return null;
   }
   setAvatarTarget(i, k, x, z, instant) {
     const a = this.courts[i].avatars[k];
@@ -353,7 +447,51 @@ export class Scene3D {
     this.arc.visible = true;
   }
 
+  // ------------------------------------------------------------ sét đánh người nói bậy
+  /** Giáng sét xuống avatar `key` ở sân `ci`. Trả false nếu không tìm thấy avatar. */
+  strike(ci, key) {
+    const c = this.courts[ci], a = c?.avatars[key];
+    if (!a) { this.flashAmt = 1; return false; }
+    const o = courtOrigin(ci), sc = a.scale.x;
+    const head = new THREE.Vector3(o.x + a.userData.x, 1.85 * sc, o.z + a.userData.z);
+    const top = head.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, 17, (Math.random() - 0.5) * 3));
+    const bolt = makeBolt(top, head);
+    this.scene.add(bolt);
+    this.bolts.push({ bolt, t: 0, a });
+    this.strikeLight.position.set(head.x, 3, head.z);
+    if (!a.userData.zap) charAvatar(a, this.charMat, true);
+    a.userData.zap = 3.2;
+    return true;
+  }
+  /** Chớp sáng cả nhà thi đấu (khi người nói bậy không đứng ở sân nào). */
+  flash() { this.flashAmt = 1; }
+
+  updateFx(dt) {
+    for (let n = this.bolts.length - 1; n >= 0; n--) {
+      const b = this.bolts[n];
+      b.t += dt;
+      const on = b.t < 0.75 && Math.floor(b.t * 16) % 3 !== 2;
+      b.bolt.visible = on;
+      if (on) this.flashAmt = 1;
+      this.strikeLight.intensity = on ? 40 : 0;
+      if (b.t > 0.8) { this.scene.remove(b.bolt); disposeBolt(b.bolt); this.bolts.splice(n, 1); }
+    }
+    for (const c of this.courts) {
+      for (const a of Object.values(c.avatars)) {
+        const u = a.userData;
+        if (u.zap > 0) {
+          u.zap -= dt;
+          a.position.y = u.zap > 2.6 ? Math.abs(Math.sin(u.zap * 40)) * 0.08 : 0;   // giật nảy lúc trúng sét
+          if (u.zap <= 0) { u.zap = 0; a.position.y = 0; charAvatar(a, null, false); }
+        }
+      }
+    }
+    this.flashAmt = Math.max(0, this.flashAmt - dt * 4);
+    this.hemi.intensity = 1.05 + this.flashAmt * 1.6;
+  }
+
   update(dt) {
+    this.updateFx(dt);
     const k = 1 - Math.exp(-11 * dt);
     for (const c of this.courts) {
       for (const [key, a] of Object.entries(c.avatars)) {

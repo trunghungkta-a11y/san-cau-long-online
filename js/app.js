@@ -4,9 +4,10 @@ import { Scene3D, STANDBY } from './scene.js';
 import { Host } from './host.js';
 import {
   simulate, at, launchVel, assistSolve, powerToSpeed, windowFor, judgeLanding,
-  HIT_RALLY, HIT_SERVE, teamDir, rightX, QUALITY_NAME,
+  HIT_RALLY, HIT_SERVE, teamDir, rightX, QUALITY_NAME, COURT, DT,
 } from './physics.js';
-import { slotsOf, teamOfSlot } from './rules.js';
+import { slotsOf, teamOfSlot, slotKey, idxOfSlot } from './rules.js';
+import { locBay } from './tubay.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -15,6 +16,8 @@ const MODE_TXT = { singles: 'Đánh đơn', doubles: 'Đánh đôi' };
 const TEAM_TXT = ['Đội đỏ', 'Đội xanh'];
 const SLOT_ORDER = ['t0p0', 't1p0', 't0p1', 't1p1'];
 
+// Thiết bị cảm ứng (điện thoại, máy tính bảng) hoặc thêm ?touch vào địa chỉ để thử
+const TOUCH0 = matchMedia('(pointer: coarse)').matches || new URLSearchParams(location.search).has('touch');
 const uid = sessionStorage.bm_uid || (sessionStorage.bm_uid = Math.random().toString(36).slice(2, 10));
 const S = {
   be: null, scene: null, me: { id: uid, name: localStorage.bm_name || '' },
@@ -28,8 +31,12 @@ const ctl = {
 };
 
 // ------------------------------------------------------------------ tiện ích giao diện
-let toastTimer = 0;
-function toast(msg, ms = 2600) {
+let toastTimer = 0, toastLock = 0;
+/** Thông báo nổi. prio=true (sét đánh) giữ chỗ hết thời gian; tin thường đến lúc đó sẽ hiện sau. */
+function toast(msg, ms = 2600, prio = false) {
+  const now = performance.now();
+  if (!prio && now < toastLock) { setTimeout(() => toast(msg, ms), toastLock - now + 50); return; }
+  if (prio) toastLock = now + ms;
   const t = $('#toast');
   t.textContent = msg; t.classList.add('on');
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), ms);
@@ -95,15 +102,16 @@ function refreshHall() {
   for (let i = 0; i < 9; i++) {
     const s = statusOf(i), C = courtData(i);
     S.scene.setBoard(i, { title: s.title, line1: s.l1, line2: s.l2, color: s.color });
-    S.scene.setRoster(i, { players: C?.players || {}, judges: C?.judges || {} });
+    S.scene.setRoster(i, { players: C?.players || {}, judges: C?.judges || {}, specs: C?.specs || {}, selfId: S.me.id });
     const live = C?.state === 'playing' && C.game?.setup;
     for (const k of Object.keys(C?.players || {})) {
       const p = live ? C.game.setup[k] : STANDBY[k];
       if (p && !(S.cur?.ci === i && C?.state === 'playing')) S.scene.setAvatarTarget(i, k, p[0], p[1], false);
     }
     const jn = ['j0', 'j1'].filter((j) => C?.judges?.[j]).length;
+    const sn = Object.keys(C?.specs || {}).length;
     html += `<button class="card ${s.cls}" data-court="${i}"><b><span class="dot"></span>Sân ${i + 1}</b>
-      <div class="st">${esc(s.l1)}</div><div class="st">${C ? `TT biên: ${jn}/2 người` : 'Sẵn sàng'}</div></button>`;
+      <div class="st">${esc(s.l1)}</div><div class="st">${C ? `TT biên ${jn}/2 · 👀 ${sn}` : 'Sẵn sàng'}</div></button>`;
   }
   list.innerHTML = html;
 }
@@ -178,6 +186,7 @@ async function takeRole(i, kind, key) {
   const path = kind === 'player' ? `courts/${i}/players/${key}` : kind === 'judge' ? `courts/${i}/judges/${key}` : `courts/${i}/specs/${me.id}`;
   if (S.slotPath === path) return;
   const rec = { id: me.id, name: me.name };
+  if (kind === 'spec') rec.ts = be.now();
   const ok = await be.transaction(path, (cur) => (cur ? undefined : rec));
   if (!ok) { toast('Vị trí vừa có người ngồi'); return; }
   const old = { path: S.slotPath, disc: S.slotDisc };
@@ -207,11 +216,13 @@ function enter(i, role, key, owner) {
   S.scene.enterCourt(i);
   $('#hall').hidden = true; $('#courtUI').hidden = false;
   $('#banner').style.display = 'none';
+  chatSub(`c${i}`); chat.ch = `c${i}`; markSeen();
   renderAll();
+  renderChat(true);
 }
 
 function resetCtl() {
-  ctl.hold = false; ctl.tossParams = null; ctl.callRid = -1; ctl.callVal = null; ctl.pv = null;
+  ctl.hold = false; ctl.tossParams = null; ctl.callRid = -1; ctl.callVal = null; ctl.pv = null; ctl.queued = null;
   const key = S.cur?.key;
   const st = key ? STANDBY[key] : null;
   if (st) { ctl.x = st[0]; ctl.z = st[1]; }
@@ -236,8 +247,11 @@ async function leave(msg, closed) {
   S.scene.hallView();
   $('#courtUI').hidden = true; $('#hall').hidden = false;
   $('#banner').style.display = '';
-  $('#touch').hidden = true;
+  $('#touch').hidden = true; $('#shotBar').hidden = true;
+  document.body.classList.remove('playing');
+  chatUnsub(`c${cur.ci}`); chat.ch = 'hall';
   refreshHall();
+  renderChat(true);
   if (msg) toast(msg, 3200);
 }
 $('#leaveBtn').onclick = () => leave('Bạn đã rời sân');
@@ -282,7 +296,7 @@ function syncCurrent() {
 
 function onNewServe(C, G) {
   S.lastRid = G.rid;
-  ctl.tossParams = null; ctl.callRid = -1; ctl.callVal = null; ctl.hold = false;
+  ctl.tossParams = null; ctl.callRid = -1; ctl.callVal = null; ctl.hold = false; ctl.queued = null;
   if (S.cur.role === 'player') {
     const dir = teamDir(teamOfSlot(S.cur.key));
     ctl.aim = S.cur.key === G.serverPid ? [-G.side * 1.5, dir * (C.cfg.mode === 'singles' ? 5.0 : 4.0)] : [0, dir * 4.2];
@@ -311,7 +325,7 @@ function onShot(v) {
   S.traj = simulate(v.p, v.v, { net: v.kind !== 'toss' });
   if (v.kind !== 'toss' && S.cur) {
     S.scene.swing(S.cur.ci, v.pid);
-    if (v.pid === S.cur.key && v.q !== undefined && v.q !== null) flashQuality(v.q);
+    if (v.pid === S.cur.key && v.q !== undefined && v.q !== null) { flashQuality(v.q); if (touchUI.on) navigator.vibrate?.(v.q >= 2 ? 25 : 12); }
   }
 }
 
@@ -372,6 +386,11 @@ function renderRoster() {
       ${!p ? `<button class="mini" data-act="judge" data-k="${j}">Nhận chân</button>` : ''}</div>`;
   }
   h += `<div class="sec">Khán giả: ${nSpec}</div>`;
+  if (nSpec) {
+    const names = Object.values(C.specs).sort((a, b) => (a.ts || 0) - (b.ts || 0))
+      .map((p) => `<span class="sp${p.id === S.me.id ? ' me' : ''}">${esc(p.name)}</span>`).join('');
+    h += `<div class="specs">${names}</div>`;
+  }
   if (cur.role !== 'spec') h += `<button class="mini" data-act="spec">Chuyển sang xem</button>`;
   if (lobby && owner) {
     const ready = filled(C) === need(C);
@@ -388,7 +407,7 @@ $('#roster').addEventListener('click', async (e) => {
   if (a === 'fold') { S.rosterOpen = !(S.rosterOpen ?? C.state !== 'playing'); renderRoster(); }
   else if (a === 'sit') await takeRole(ci, 'player', k);
   else if (a === 'judge') await takeRole(ci, 'judge', k);
-  else if (a === 'spec') { await releaseSlot(); S.cur.role = 'spec'; S.cur.key = null; renderAll(); }
+  else if (a === 'spec') await takeRole(ci, 'spec', null);
   else if (a === 'addbot') await be.set(`courts/${ci}/players/${k}`, { id: `bot-${k}`, name: 'Máy', bot: true });
   else if (a === 'rmbot') await be.remove(`courts/${ci}/players/${k}`);
   else if (a === 'mode') {
@@ -444,13 +463,38 @@ function endHold() {
   const { G, key, ci } = info, now = S.be.now();
   const power = clamp((performance.now() - ctl.holdAt) / 1000 / ramp(G), 0, 1);
   const base = { px: +ctl.x.toFixed(2), pz: +ctl.z.toFixed(2), power, tx: ctl.aim[0], tz: ctl.aim[1], el: ctl.el, assist: ctl.assist };
+  const tNow = S.shot ? (now - S.shot.t0) / 1000 : 0;
   if (G.phase === 'serve' && key === G.serverPid) {
     if (!S.shot) { ctl.tossParams = { ...base }; sendIntent(info, { k: 'toss', ...base }); }
-    else if (S.shot.kind === 'toss' && S.shot.pid === key) { S.scene.swing(ci, key); sendIntent(info, { k: 'hit', t: now }); }
+    else if (S.shot.kind === 'toss' && S.shot.pid === key) {
+      S.scene.swing(ci, key);
+      const hc = hitContext(info, tNow);
+      if (touchUI.on && hc?.w && tNow < hc.w.t1 - 0.06) { ctl.queued = { serve: true, seq: S.shot.seq, until: performance.now() + 400, base }; return; }
+      sendIntent(info, { k: 'hit', t: now });
+    }
   } else if (G.phase === 'rally' && S.shot) {
     S.scene.swing(ci, key);
+    if (touchUI.on) {
+      // Điện thoại: nhả sớm (chưa vào tầm hoặc trước cửa sổ đánh) thì chờ tối đa 0,4 s, cầu vào tầm sẽ tự đánh
+      const hc = hitContext(info, tNow);
+      if (hc?.kind === 'rally' && !(hc.w && tNow >= hc.w.t1 - 0.03)) { ctl.queued = { serve: false, seq: S.shot.seq, until: performance.now() + 400, base }; return; }
+    }
     sendIntent(info, { k: 'hit', t: now, ...base });
   }
+}
+
+/** Gửi cú đánh đang chờ khi cầu vào tầm (chỉ dùng trên điện thoại). */
+function flushQueued(info, tNow) {
+  const q = ctl.queued; if (!q) return;
+  if (!S.shot || S.shot.seq !== q.seq || performance.now() > q.until) { ctl.queued = null; return; }
+  const hc = hitContext(info, tNow);
+  if (!hc?.w) return;
+  const lo = hc.w.t1 - (q.serve ? 0.06 : 0.02);
+  if (tNow < lo || tNow > hc.w.t2) return;
+  ctl.queued = null;
+  S.scene.swing(info.ci, info.key);
+  if (q.serve) sendIntent(info, { k: 'hit', t: S.be.now() });
+  else sendIntent(info, { k: 'hit', t: S.be.now(), ...q.base, px: +ctl.x.toFixed(2), pz: +ctl.z.toFixed(2) });
 }
 
 function callLine(v) {
@@ -489,7 +533,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (p) ctl.aim = p;
 });
 canvas.addEventListener('pointerdown', (e) => {
-  if (!S.cur || S.cur.role !== 'player' || e.button > 0) return;
+  if (!S.cur || S.cur.role !== 'player' || e.button > 0 || e.pointerType === 'touch') return;
   const p = S.scene.pointerToCourt(e.clientX, e.clientY); if (p) ctl.aim = p;
   startHold();
 });
@@ -502,22 +546,127 @@ $('#elBtns').addEventListener('click', (e) => { const b = e.target.closest('butt
 $('#optAssist').onchange = (e) => { ctl.assist = e.target.checked; };
 $('#optArc').onchange = (e) => { ctl.arc = e.target.checked; };
 
-// cần ảo (điện thoại)
+// ------------------------------------------------------------------ điều khiển điện thoại
+// Nửa trái: cần ảo nổi (đặt ngón ở đâu cần hiện ở đó). Nửa phải: vuốt để đánh.
+// Vuốt lên = đánh sâu (vuốt càng dài càng sâu), lệch ngang = sang trái/phải, vuốt xuống = đập.
+// Chạm rồi nhả không vuốt = giữ hướng cũ. Thời điểm nhả ngón là thời điểm đánh.
+const touchUI = { on: false, stickId: null, swipeId: null, s0: [0, 0], base: [0, 0], shot: 'auto', autoRun: true, manualAt: 0 };
+const SHOTS = [['auto', 'Tự'], [-8, 'Đập'], [8, 'Tạt'], [22, 'Cắt'], [45, 'Phông'], [62, 'Lốp']];
+function setTouchMode(on) {
+  if (touchUI.on === on) return;
+  touchUI.on = on;
+  document.body.classList.toggle('touch', on);
+}
+setTouchMode(TOUCH0);
+addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') setTouchMode(true); }, { capture: true, passive: true });
+
+function renderShotBar() {
+  $('#shotBar').innerHTML = SHOTS.map(([v, t]) => `<button type="button" data-shot="${v}" class="${String(v) === String(touchUI.shot) ? 'on' : ''}">${t}</button>`).join('');
+}
+renderShotBar();
+$('#shotBar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-shot]'); if (!b) return;
+  touchUI.shot = b.dataset.shot === 'auto' ? 'auto' : Number(b.dataset.shot);
+  if (touchUI.shot !== 'auto') ctl.el = touchUI.shot;
+  renderShotBar();
+});
+$('#optAuto').onchange = (e) => { touchUI.autoRun = e.target.checked; };
+
+const tNowOf = () => (S.shot ? (S.be.now() - S.shot.t0) / 1000 : 0);
+
+/** Hướng vuốt trên màn hình → điểm rơi mong muốn trên sân đối phương. null nếu chỉ chạm. */
+function swipeAim(info, dx, dy) {
+  const { G, team } = info, dir = teamDir(team), rx = rightX(team);
+  const hx = (G.mode === 'singles' ? COURT.HSW : COURT.HW) - 0.35;
+  if (Math.hypot(dx, dy) < 22) return null;
+  const lat = clamp(dx / (innerWidth * 0.22), -1, 1);
+  let depth, smash = false;
+  if (dy < -12) depth = 2.1 + clamp(-dy / (innerHeight * 0.28), 0, 1) * (COURT.HL - 0.4 - 2.1);
+  else if (dy > 12) { smash = true; depth = 3.3 + clamp(dy / (innerHeight * 0.25), 0, 1) * 2.6; }
+  else depth = 4.2;
+  return { aim: [rx * lat * hx, dir * depth], depth, smash };
+}
+/** Góc đánh: theo nút đã chọn, hoặc "Tự" chọn theo độ sâu, độ cao chạm cầu và kiểu vuốt. */
+function pickEl(info, depth, smash) {
+  if (touchUI.shot !== 'auto') return Number(touchUI.shot);
+  if (info.G.phase === 'serve') return depth < 3.6 ? 12 : 38;
+  const hc = hitContext(info, tNowOf()), h = hc?.Pc?.[1] ?? 1.5;
+  if (smash) return h >= 1.9 ? -8 : 8;
+  if (depth < 3.0) return 22;
+  if (depth >= 5.0) return h < 1.3 ? 62 : 45;
+  return 8;
+}
+function updateSwipe(e) {
+  const info = myInfo(); if (!info) return;
+  const dx = e.clientX - touchUI.s0[0], dy = e.clientY - touchUI.s0[1];
+  const sw = swipeAim(info, dx, dy);
+  if (sw) { ctl.aim = sw.aim; ctl.el = pickEl(info, sw.depth, sw.smash); }
+  else ctl.el = pickEl(info, Math.abs(ctl.aim[1]), false);
+  const L = Math.hypot(dx, dy), ln = $('#swipeLine');
+  ln.hidden = L < 8;
+  ln.style.width = `${L}px`;
+  ln.style.transform = `translate(${touchUI.s0[0]}px, ${touchUI.s0[1]}px) rotate(${Math.atan2(dy, dx)}rad)`;
+}
 {
-  const st = $('#stick'), knob = $('i', st);
-  const setStick = (e) => {
-    const r = st.getBoundingClientRect();
-    let dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2), dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
-    const m = Math.hypot(dx, dy); if (m > 1) { dx /= m; dy /= m; }
-    ctl.stick = [dx, dy]; knob.style.transform = `translate(${dx * 30}px,${dy * 30}px)`;
+  const pad = $('#touch'), st = $('#stick'), knob = $('i', st);
+  pad.addEventListener('pointerdown', (e) => {
+    if (!myInfo()) return;
+    e.preventDefault();
+    if (e.clientX < innerWidth * 0.45) {
+      if (touchUI.stickId !== null) return;
+      touchUI.stickId = e.pointerId; touchUI.base = [e.clientX, e.clientY];
+      st.style.left = `${e.clientX}px`; st.style.top = `${e.clientY}px`; st.classList.add('on'); knob.style.transform = '';
+      ctl.stick = [0, 0];
+    } else {
+      if (touchUI.swipeId !== null) return;
+      touchUI.swipeId = e.pointerId; touchUI.s0 = [e.clientX, e.clientY];
+      startHold(); updateSwipe(e);
+    }
+    try { pad.setPointerCapture(e.pointerId); } catch (err) { /* bỏ qua */ }
+  });
+  pad.addEventListener('pointermove', (e) => {
+    if (e.pointerId === touchUI.stickId) {
+      let dx = (e.clientX - touchUI.base[0]) / 56, dy = (e.clientY - touchUI.base[1]) / 56;
+      const m = Math.hypot(dx, dy);
+      if (m > 1) { dx /= m; dy /= m; }
+      knob.style.transform = `translate(${dx * 40}px, ${dy * 40}px)`;
+      ctl.stick = m < 0.15 ? [0, 0] : [dx, dy];                       // vùng chết ở tâm
+      touchUI.manualAt = performance.now();
+    } else if (e.pointerId === touchUI.swipeId) updateSwipe(e);
+  });
+  const end = (e, cancel) => {
+    if (e.pointerId === touchUI.stickId) {
+      touchUI.stickId = null; ctl.stick = [0, 0]; st.classList.remove('on'); touchUI.manualAt = performance.now();
+    } else if (e.pointerId === touchUI.swipeId) {
+      if (!cancel) updateSwipe(e);
+      touchUI.swipeId = null; $('#swipeLine').hidden = true;
+      if (cancel) ctl.hold = false; else endHold();
+    }
   };
-  st.addEventListener('pointerdown', (e) => { st.setPointerCapture(e.pointerId); setStick(e); });
-  st.addEventListener('pointermove', (e) => { if (e.buttons || e.pressure) setStick(e); });
-  const rel = () => { ctl.stick = [0, 0]; knob.style.transform = ''; };
-  st.addEventListener('pointerup', rel); st.addEventListener('pointercancel', rel);
-  const hb = $('#hitBtn');
-  hb.addEventListener('pointerdown', (e) => { hb.setPointerCapture(e.pointerId); startHold(); });
-  hb.addEventListener('pointerup', endHold); hb.addEventListener('pointercancel', endHold);
+  pad.addEventListener('pointerup', (e) => end(e, false));
+  pad.addEventListener('pointercancel', (e) => end(e, true));
+}
+
+/** Tự chạy: tới điểm đón cầu khi đối phương vừa đánh, về giữa nửa sân khi mình vừa đánh. */
+function autoTarget(info, tNow) {
+  const { G, team, key, ci } = info, sh = S.shot, tr = S.traj, half = -teamDir(team);
+  const home = G.mode === 'singles' ? [0, half * 3.6] : [rightX(team) * (idxOfSlot(key) === 0 ? 1.3 : -1.3), half * 3.6];
+  if (!sh || !tr?.land) return null;
+  if (sh.team === team) return home;
+  if (tNow >= tr.land.t || (sh.kind === 'serve' && key !== G.receiverPid)) return null;
+  const P = tr.pts;
+  let tgt = null;
+  for (let i = Math.max(1, Math.ceil(tNow / DT)); i < tr.n - 1; i++) {
+    const y = P[3 * i + 1], z = P[3 * i + 2];
+    if (y <= 2.0 && y >= 0.5 && P[3 * i + 4] <= y && z * half > 0.3) { tgt = [P[3 * i], z]; break; }
+  }
+  if (!tgt) tgt = [tr.land.x, tr.land.z];
+  if (tgt[1] * half <= 0.2) return home;
+  if (G.mode === 'doubles') {
+    const pp = S.scene.avatarPos(ci, slotKey(team, 1 - idxOfSlot(key)));
+    if (pp && Math.hypot(pp[0] - tgt[0], pp[1] - tgt[1]) + 0.6 < Math.hypot(ctl.x - tgt[0], ctl.z - tgt[1])) return home;
+  }
+  return [clamp(tgt[0], -4.3, 4.3), tgt[1]];
 }
 
 // ------------------------------------------------------------------ xem trước đường bay
@@ -577,6 +726,13 @@ function courtFrame(dt, now) {
     const fwd = teamDir(info.team), right = rightX(info.team), k = ctl.keys;
     let mx = right * ((k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0)) + right * ctl.stick[0];
     let mz = fwd * ((k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0)) - fwd * ctl.stick[1];
+    if (touchUI.on && touchUI.autoRun && G.phase === 'rally' && touchUI.stickId === null && now - touchUI.manualAt > 500 && Math.hypot(mx, mz) < 0.02) {
+      const tg = autoTarget(info, tNow);
+      if (tg) {
+        const ddx = tg[0] - ctl.x, ddz = tg[1] - ctl.z, d = Math.hypot(ddx, ddz);
+        if (d > 0.06) { const f = Math.min(1, d / 0.35) / d; mx = ddx * f; mz = ddz * f; }
+      }
+    }
     const m = Math.hypot(mx, mz);
     if (m > 1) { mx /= m; mz /= m; }
     if (m > 0.02) {
@@ -615,7 +771,10 @@ function courtFrame(dt, now) {
   const hud = $('#playHud'), jh = $('#judgeHud');
   hud.hidden = !info;
   jh.hidden = cur.role !== 'judge';
-  $('#touch').hidden = !(info && matchMedia('(pointer:coarse)').matches);
+  const tShow = !!(info && touchUI.on && G.phase !== 'over');
+  $('#touch').hidden = !tShow; $('#shotBar').hidden = !tShow;
+  document.body.classList.toggle('playing', !!info);
+  if (info && ctl.queued) flushQueued(info, tNow);
   if (info) {
     const hc = G.phase === 'over' ? null : hitContext(info, tNow);
     const power = curPower(info);
@@ -654,6 +813,20 @@ function updatePlayHud(info, hc, power, tNow) {
     $('#tmark').style.left = `${pc(tNow)}%`;
   }
   let hint = '';
+  if (touchUI.on) {
+    if (G.phase === 'serve') {
+      if (key !== G.serverPid) hint = key === G.receiverPid ? 'Bạn đỡ giao cầu, chờ cầu bay tới' : 'Chờ giao cầu';
+      else if (!S.shot) hint = 'Vuốt bên phải để tung cầu (hướng vuốt = hướng giao)';
+      else hint = w ? 'Chạm rồi nhả bên phải đúng vạch xanh để đánh' : 'Cầu đang rơi…';
+    } else if (G.phase === 'rally') {
+      if (!hc) hint = 'Chờ đối phương đánh';
+      else if (!w) hint = touchUI.autoRun ? 'Đang tự chạy tới điểm đón cầu…' : 'Kéo bên trái để chạy tới vòng cyan';
+      else hint = 'Vuốt bên phải, nhả đúng vạch xanh: lên = sâu, ngang = chéo, xuống = đập';
+    } else if (G.phase === 'judging') hint = 'Trọng tài biên đang phán quyết…';
+    else if (G.phase === 'over') hint = 'Hết trận';
+    $('#hint').textContent = hint;
+    return;
+  }
   if (G.phase === 'serve') {
     if (key !== G.serverPid) hint = key === G.receiverPid ? 'Bạn đỡ giao cầu — đứng đúng ô chéo, chờ cầu bay tới' : 'Chờ giao cầu';
     else if (!S.shot) hint = ctl.assist ? 'Giao cầu: giữ rồi nhả SPACE để tung cầu' : 'Giao cầu: giữ SPACE để căn lực, nhả để tung cầu';
@@ -681,7 +854,8 @@ function cameraFor(info, G, tr) {
   const smooth = 0.07;
   if (info) {
     const fwd = teamDir(info.team);
-    sc.followCamera([ctl.x * 0.45, 7.4, -fwd * 13.8], [ctl.x * 0.15, 0.5, fwd * 3.5], smooth);
+    if (innerWidth / innerHeight < 0.8) sc.followCamera([ctl.x * 0.4, 9.4, -fwd * 12.6], [ctl.x * 0.15, 0, fwd * 4.4], smooth);   // điện thoại dọc
+    else sc.followCamera([ctl.x * 0.45, 7.4, -fwd * 13.8], [ctl.x * 0.15, 0.5, fwd * 3.5], smooth);
     return;
   }
   if (cur.role === 'judge') {
@@ -699,6 +873,150 @@ function cameraFor(info, G, tr) {
   const [p, l] = views[S.view];
   S.scene.followCamera(p, l, smooth);
 }
+
+// ------------------------------------------------------------------ bình luận
+// Kênh "hall" (Sảnh) chung cho mọi người; kênh "c0".."c8" cho từng sân, chỉ theo dõi khi đang ở sân đó.
+const CHAT_N = 60;
+const isNarrow = () => matchMedia('(max-width: 760px)').matches;
+const chat = { open: !isNarrow() && !TOUCH0, ch: 'hall', data: {}, seen: {}, subs: {}, since: {}, struck: new Set(), lastSend: 0 };
+const ROLE_TXT = { player: 'VĐV', judge: 'TT biên', spec: 'Khán giả' };
+const chName = (ch) => (ch === 'hall' ? 'Sảnh' : `Sân ${Number(ch.slice(1)) + 1}`);
+const hue = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 360; };
+const hhmm = (ts) => { const d = new Date(ts); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+
+function chatMsgs(ch) {
+  return Object.entries(chat.data[ch] || {})
+    .map(([k, m]) => ({ k, ...m }))
+    .filter((m) => typeof m.t === 'string' && typeof m.n === 'string' && Number.isFinite(m.ts))
+    .map((m) => { const lb = locBay(m.t); return { ...m, t: lb.out, bay: !!m.b || lb.hit }; })
+    .sort((a, b) => a.ts - b.ts || (a.k < b.k ? -1 : 1))
+    .slice(-CHAT_N);
+}
+const lastTs = (ch) => { const l = chatMsgs(ch); return l.length ? l[l.length - 1].ts : 0; };
+const unread = (ch) => chatMsgs(ch).filter((m) => m.ts > (chat.seen[ch] ?? Infinity) && m.u !== S.be.uid).length;
+const markSeen = () => { chat.seen[chat.ch] = lastTs(chat.ch); };
+
+function chatSub(ch) {
+  if (chat.subs[ch]) return;
+  chat.since[ch] = S.be.now() - 5000;
+  chat.subs[ch] = S.be.onLast(`chat/${ch}`, CHAT_N, (v) => {
+    chat.data[ch] = v || {};
+    if (!(ch in chat.seen)) chat.seen[ch] = lastTs(ch);            // lịch sử cũ không tính là chưa đọc
+    if (chat.open && ch === chat.ch) markSeen();
+    for (const m of chatMsgs(ch)) {                                 // tin bậy mới đến → sét đánh người gửi
+      if (m.bay && m.ts >= chat.since[ch] && !chat.struck.has(m.k)) { chat.struck.add(m.k); strikeFor(m); }
+    }
+    renderChat(false);
+  });
+}
+function chatUnsub(ch) { chat.subs[ch]?.(); delete chat.subs[ch]; delete chat.data[ch]; delete chat.seen[ch]; }
+
+// ---- sét đánh + tiếng sấm
+let actx = null;
+const wakeAudio = () => {
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { actx = null; }
+};
+addEventListener('pointerdown', wakeAudio, { passive: true });
+addEventListener('keydown', wakeAudio);
+function noiseBurst(t, freq, q, peak, dur, type) {
+  const n = Math.floor(actx.sampleRate * dur), buf = actx.createBuffer(1, n, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const f = actx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f).connect(g).connect(actx.destination); src.start(t); src.stop(t + dur);
+}
+function thunder() {
+  if (!actx || actx.state !== 'running') return;
+  const t = actx.currentTime;
+  noiseBurst(t, 3000, 0.7, 0.5, 0.25, 'highpass'); noiseBurst(t + 0.05, 220, 0.5, 0.9, 2.0, 'lowpass'); noiseBurst(t + 0.35, 90, 0.4, 0.8, 2.8, 'lowpass');
+}
+function strikeFor(m) {
+  const mine = m.u === S.be.uid;
+  const at = S.scene.findPerson(m.p);
+  if (at) S.scene.strike(at.ci, at.key); else S.scene.flash();
+  thunder();
+  if (mine) navigator.vibrate?.([60, 40, 120]);
+  toast(`⚡ ${mine ? 'Bạn' : m.n} vừa nói bậy và bị sét đánh!`, 3200, true);
+}
+
+function chatNote(t) { $('#chatNote').textContent = t; }
+
+function renderChat(toBottom) {
+  if (!S.be) return;
+  const chans = ['hall', ...(S.cur ? [`c${S.cur.ci}`] : [])];
+  if (!chans.includes(chat.ch)) chat.ch = chans[chans.length - 1];
+  const total = Object.keys(chat.subs).reduce((a, ch) => a + (chat.open && ch === chat.ch ? 0 : unread(ch)), 0);
+  const bd = $('#chatBadge'); bd.hidden = !total; bd.textContent = total > 9 ? '9+' : String(total);
+  $('#chat').hidden = !chat.open;
+  if (!chat.open) return;
+  $('#chatTabs').innerHTML = chans.map((ch) => {
+    const n = ch === chat.ch ? 0 : unread(ch);
+    return `<button type="button" data-ch="${ch}" class="${ch === chat.ch ? 'on' : ''}">${chName(ch)}${n ? `<b class="cnt">${n}</b>` : ''}</button>`;
+  }).join('');
+  const box = $('#chatList'), keep = box.scrollTop;
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 48;
+  const list = chatMsgs(chat.ch);
+  box.innerHTML = list.length ? list.map((m) => {
+    const mine = m.u === S.be.uid;
+    const col = mine ? '' : ` style="color:hsl(${hue(m.u || m.n)} 70% 70%)"`;
+    return `<div class="msg${mine ? ' me' : ''}${m.bay ? ' bay' : ''}">${m.r ? `<span class="rl">${esc(m.r)}</span>` : ''}<span class="who"${col}>${esc(m.n)}</span>${esc(m.t)}<span class="tm">${hhmm(m.ts)}</span>${m.bay ? '<span class="bay-tag">⚡ Nói bậy, đã bị sét đánh</span>' : ''}</div>`;
+  }).join('') : `<p class="muted small">Chưa có bình luận ở ${chName(chat.ch)}.</p>`;
+  box.scrollTop = toBottom || near ? box.scrollHeight : keep;
+  $('#chatIn').placeholder = `Bình luận ở ${chName(chat.ch)}…`;
+  fitChat();
+}
+
+/** Khung bình luận nằm bên trái, giữa thanh trên (hoặc băng vàng) và bảng chọn sân. */
+function fitChat() {
+  const c = $('#chat');
+  if (c.hidden || isNarrow()) { c.style.top = ''; c.style.height = ''; return; }
+  const bn = $('#banner'), br = bn.getBoundingClientRect();
+  const top = br.height > 0 && br.left < 14 + 310 ? br.bottom + 8 : 58;
+  const hall = $('#hall');
+  const bottom = !hall.hidden ? hall.getBoundingClientRect().top - 10 : innerHeight - 14;
+  c.style.top = `${top}px`;
+  c.style.height = `${Math.max(150, Math.min(S.cur ? 460 : 420, bottom - top))}px`;
+}
+addEventListener('resize', fitChat);
+
+function chatRole() {
+  const cur = S.cur;
+  if (!cur || chat.ch !== `c${cur.ci}`) return '';
+  if (courtData(cur.ci)?.owner?.id === S.me.id) return 'Chủ sân';
+  return ROLE_TXT[cur.role] || '';
+}
+
+async function sendChat() {
+  const inp = $('#chatIn');
+  const t = inp.value.replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (!t) return;
+  const now = performance.now();
+  if (now - chat.lastSend < 1500) { chatNote('Gửi chậm lại một chút.'); return; }
+  chat.lastSend = now;
+  const lb = locBay(t);
+  const msg = { n: S.me.name.slice(0, 14), t: lb.out, ts: Math.round(S.be.now()), u: S.be.uid, p: S.me.id };
+  if (lb.hit) msg.b = true;
+  const r = chatRole(); if (r) msg.r = r;
+  inp.value = ''; chatNote('');
+  try { await S.be.push(`chat/${chat.ch}`, msg); }
+  catch (e) { console.warn(e); inp.value = t; chatNote('Chưa gửi được. Kiểm tra mạng rồi thử lại.'); }
+}
+
+$('#chatBtn').onclick = () => {
+  chat.open = !chat.open;
+  if (chat.open) markSeen();
+  renderChat(true);
+  if (chat.open && !isNarrow()) $('#chatIn').focus();
+};
+$('#chatClose').onclick = () => { chat.open = false; renderChat(false); };
+$('#chatTabs').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-ch]'); if (!b) return;
+  chat.ch = b.dataset.ch; markSeen(); renderChat(true);
+});
+$('#chatForm').addEventListener('submit', (e) => { e.preventDefault(); sendChat(); });
+$('#chatIn').addEventListener('keydown', (e) => { if (e.key === 'Escape') e.target.blur(); });
 
 // ------------------------------------------------------------------ khởi động
 async function boot() {
@@ -724,7 +1042,9 @@ async function boot() {
     b.textContent = `Chế độ cục bộ: chỉ chơi giữa các tab cùng trình duyệt. ${why}`;
   }
   S.be.on('courts', onCourts);
-  window.__bm = { S, ctl, hitContext, myInfo, computePreview };
+  chatSub('hall');
+  renderChat(true);
+  window.__bm = { S, ctl, hitContext, myInfo, computePreview, chat, touchUI, autoTarget };
   requestAnimationFrame(frame);
   document.body.dataset.ready = '1';
 }

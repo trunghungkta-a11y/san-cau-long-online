@@ -32,7 +32,7 @@ async function firebaseBackend() {
   ]);
   const app = initializeApp(FIREBASE_CONFIG, 'badminton');
   // Đăng nhập ẩn danh như chùa online, để Rules có thể yêu cầu auth != null
-  await auth.signInAnonymously(auth.getAuth(app));
+  const cred = await auth.signInAnonymously(auth.getAuth(app));
   const d = db.getDatabase(app);
   const R = (p) => db.ref(d, `${DB_ROOT}/${p}`);
   await db.get(R('courts'));                 // thử quyền đọc: lỗi PERMISSION_DENIED nếu Rules chưa có nhánh badminton
@@ -40,6 +40,7 @@ async function firebaseBackend() {
   db.onValue(db.ref(d, '.info/serverTimeOffset'), (s) => { offset = s.val() || 0; });
   return {
     mode: 'firebase',
+    uid: cred.user.uid,
     now: () => Date.now() + offset,
     key: () => db.push(R('_k')).key,
     set: (p, v) => db.set(R(p), v === undefined ? null : v),
@@ -47,6 +48,10 @@ async function firebaseBackend() {
     remove: (p) => db.remove(R(p)),
     get: async (p) => (await db.get(R(p))).val(),
     on: (p, cb) => db.onValue(R(p), (s) => cb(s.val())),
+    /** Thêm bản ghi mới với khoá tự sinh (theo thời gian). */
+    push: (p, v) => db.set(db.push(R(p)), v),
+    /** Theo dõi n bản ghi cuối của một danh sách. */
+    onLast: (p, n, cb) => db.onValue(db.query(R(p), db.limitToLast(n)), (s) => cb(s.val())),
     onDisconnectRemove: (p) => {
       const od = db.onDisconnect(R(p));
       od.remove();
@@ -121,6 +126,7 @@ function localBackend() {
 
   return {
     mode: 'local',
+    uid: id,
     now: () => Date.now(),
     key: () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4),
     set: async (p, v) => apply([{ path: p, val: v === undefined ? null : v }]),
@@ -131,6 +137,16 @@ function localBackend() {
       const l = { path: split(p).join('/'), cb };
       listeners.add(l);
       queueMicrotask(() => { if (listeners.has(l)) cb(clone(getAt(l.path))); });
+      return () => listeners.delete(l);
+    },
+    push: async (p, v) => apply([{ path: `${p}/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, val: v }]),
+    onLast: (p, n, cb) => {
+      const l = { path: split(p).join('/'), cb: (v) => {
+        if (!v || typeof v !== 'object') return cb(v);
+        cb(Object.fromEntries(Object.entries(v).sort((a, b) => (a[1]?.ts ?? 0) - (b[1]?.ts ?? 0)).slice(-n)));
+      } };
+      listeners.add(l);
+      queueMicrotask(() => { if (listeners.has(l)) l.cb(clone(getAt(l.path))); });
       return () => listeners.delete(l);
     },
     onDisconnectRemove: (p) => { disc.add(p); return () => disc.delete(p); },
